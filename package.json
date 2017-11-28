@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "node-env-file": "^0.1.8",
-    "node-telegram-bot-api": "^0.29.0"
+    "node-telegram-bot-api": "^0.29.0",
+    "sqlite3": "^3.1.13"
   }
 }
