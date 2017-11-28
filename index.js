@@ -1,3 +1,4 @@
+const path = require('path');
 const fs = require('fs');
 const TelegramBot = require('node-telegram-bot-api');
 const env = require('node-env-file');
@@ -100,6 +101,50 @@ const fetchUserLove = (user_id, callback) => {
   });
 }
 
+const emptyUserLove = (user_id, callback) => {
+  db.run(`DELETE FROM loves
+         WHERE id IN ( SELECT love_id FROM user_loves WHERE user_id = $user_id )`,
+         {$user_id: user_id},
+         function() {
+          db.run(`DELETE FROM user_loves WHERE user_id = $user_id`,
+                 {$user_id: user_id},
+                 callback);
+         });
+}
+
+const getLoveCount = (user_id, callback) => {
+  db.run(`SELECT count(user_id) AS count FROM user_loves WHERE user_id = $user_id`,
+         {$user_id: user_id},
+         function(err, row) {
+           callback(this.changes);
+         });
+}
+
+const importFile = (user_id, filepath, callback) => {
+  db.serialize(function() {
+    setCurrentLoveIndex(user_id, 0, (love_index) => {
+      emptyUserLove(user_id, () => {
+
+        let count = 0;
+
+        var lineReader = require('readline').createInterface({
+          input: require('fs').createReadStream(filepath)
+        });
+
+        lineReader.on('line', function (line) {
+          count += 1;
+          insertLoveContent(user_id, line);
+        });
+
+        lineReader.on('close', function () {
+          callback(count);
+        });
+
+      });
+    });
+  });
+}
+
 if(!process.env.TELEGRAM_TOKEN) {
   console.log('missing TELEGRAM_TOKEN in .env file');
   return null;
@@ -118,13 +163,29 @@ telegram_bot.on('message', (msg) => {
   if(msg.chat.type != 'private')
     return null;
 
+  const user_id = msg.from.id;
+
+  if(msg.document && msg.document.file_id) {
+    telegram_bot.sendMessage(chatId, `Importing file...`);
+    const downloadPath = path.join(path.dirname(process.mainModule.filename), 'download');
+    telegram_bot.downloadFile(msg.document.file_id, downloadPath)
+      .then((filepath) => {
+        db.serialize(function() {
+          importFile(user_id, filepath, (count) => {
+            telegram_bot.sendMessage(chatId, `File imported - ${count} names`);
+          });
+        });
+      });
+  }
+
+
   db.get(`SELECT * FROM users WHERE id=$id`,
-    {$id: msg.from.id},
+    {$id: user_id},
     (err, row) => {
 
       if(typeof(row) == 'undefined') {
         //welcome message
-        initUser(msg.from.id, () => {
+        initUser(user_id, () => {
           let keyboard = [
             {text: 'start', callback_data: 'start'},
           ]
@@ -164,27 +225,30 @@ telegram_bot.on('callback_query', function onCallbackQuery(callbackQuery) {
     {text: 'love', callback_data: 'love'},
   ]
 
+  const user_id = msg.chat.id;
+
   const opts = {
     reply_markup: JSON.stringify({
       inline_keyboard: [keyboard]
     })
   };
   db.get(`SELECT * FROM users WHERE id=$id`,
-    {$id: msg.from.id},
+    {$id: user_id},
     (err, row) => {
 
       if(typeof(row) == 'undefined') {
         //welcome message
-        initUser(msg.from.id, () => {
-          fetchUserLove(msg.from.id, (content) => {
+        initUser(user_id, () => {
+          fetchUserLove(user_id, (content) => {
             telegram_bot.sendMessage(msg.chat.id, content, opts);
           });
         });
       } else {
-        fetchUserLove(msg.from.id, (content) => {
+        fetchUserLove(user_id, (content) => {
           telegram_bot.sendMessage(msg.chat.id, content, opts);
         });
       }
     }
   );
 });
+
