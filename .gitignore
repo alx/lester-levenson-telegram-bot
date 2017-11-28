@@ -2,3 +2,5 @@
 node_modules
 names.json
 lester.db
+download/*
+!download/.gitkeep
